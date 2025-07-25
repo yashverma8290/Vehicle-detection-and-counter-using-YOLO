@@ -24,7 +24,7 @@ Install these Python packages:
 --------------------------------------------------
 
 1. README.txt         ← You're reading this
-2. vehicle_tracking.py ← Main Python script (see full code below)
+2. vehicle_tracking.py ← Main Python script (save your code here)
 3. highway.mp4        ← Your video file (or use webcam)
 
 ✅ No need for: sort.py, config.yaml, weights download — YOLOv8 will auto-download.
@@ -35,7 +35,7 @@ Install these Python packages:
 
 1. Place your video file (e.g., highway.mp4) in the same folder.
 
-2. Save the Python code (given below) as:
+2. Save your full Python script as:
        vehicle_tracking.py
 
 3. Run the script:
@@ -60,146 +60,54 @@ Install these Python packages:
 ⚙️ SPEED ESTIMATION
 --------------------------------------------------
 
-Speed = (Displacement in pixels / Pixels per meter) / Time between frames  
-Then converted to km/h: (m/s × 3.6)
+Speed is calculated as:
 
-You can tune this in the code using:
+    Speed = (Displacement in pixels / Pixels per meter) / Time
+
+Then converted to km/h using:
+
+    Speed (km/h) = Speed (m/s) × 3.6
+
+You can tune the value in your code:
 
     PIXELS_PER_METER = 10.0
+
+Adjust this based on your video resolution and real-world scale.
 
 --------------------------------------------------
 📊 TYPICAL OUTPUT ON VIDEO FRAME
 --------------------------------------------------
 
-- Car 0.91 (confidence score)
-- ID: 5
-- 67 km/h (estimated speed)
-- Count: 12
+- Class label and confidence (e.g., Car 0.91)
+- Unique ID per vehicle (e.g., ID: 5)
+- Speed (e.g., 67 km/h)
+- Vehicle count on screen (e.g., Count: 12)
 
 --------------------------------------------------
-🧾 THE COMPLETE PYTHON CODE
+✅ FEATURES SUMMARY
 --------------------------------------------------
 
->>> Copy below into vehicle_tracking.py <<<
+- [✔] YOLOv8 Nano detection (ultralytics)
+- [✔] Built-in ID-based vehicle tracking (centroid method)
+- [✔] Speed estimation in km/h (frame-based)
+- [✔] Vehicle counting with red line crossing
+- [✔] ROI filtering using polygon
+- [✔] All in one file (no YAML, no sort.py)
 
-```python
-from ultralytics import YOLO
-import cv2
-import cvzone
-import numpy as np
-import time
-import math
+--------------------------------------------------
+📌 TO-DO / FUTURE IMPROVEMENTS
+--------------------------------------------------
 
-# -------- CONFIG -------- #
-SOURCE = 'highway.mp4'   # or 0 for webcam
-CONF_THRESH = 0.5
-PIXELS_PER_METER = 10.0  # adjust this for speed accuracy
-COUNT_LINE = (500, 750, 700, 750)
+- [ ] Add CSV logging (vehicle ID, speed, timestamp)
+- [ ] Add speed violation alerts
+- [ ] Build Streamlit or Flask dashboard
+- [ ] Multi-line and multi-lane support
+- [ ] Save vehicle images or video clips
 
-# ------------------------ #
 
-model = YOLO("yolov8n.pt")
-classNames = model.names
-vehicle_classes = {"car", "truck", "bus", "motorbike"}
-cap = cv2.VideoCapture(SOURCE)
-fps = cap.get(cv2.CAP_PROP_FPS)
 
-trackers = {}
-id_count = 0
-max_age = 30
-missed_frames = {}
+--------------------------------------------------
+👋 THANK YOU
+--------------------------------------------------
 
-counted_ids = []
-speeds = {}
-
-def get_center(x1, y1, x2, y2):
-    return (x1 + x2) // 2, (y1 + y2) // 2
-
-while True:
-    success, img = cap.read()
-    if not success:
-        break
-
-    img_region = img.copy()
-    results = model(img_region, stream=True)
-    detections = []
-
-    for r in results:
-        for box in r.boxes:
-            x1, y1, x2, y2 = map(int, box.xyxy[0])
-            conf = float(box.conf[0])
-            cls = int(box.cls[0])
-            label = classNames[cls]
-            if label in vehicle_classes and conf > CONF_THRESH:
-                detections.append([x1, y1, x2, y2])
-                cvzone.cornerRect(img, (x1, y1, x2 - x1, y2 - y1))
-                cvzone.putTextRect(img, f'{label} {round(conf,2)}', (x1, y1 - 10), 1, 1)
-
-    updated_ids = []
-    for det in detections:
-        cx, cy = get_center(*det)
-        matched = False
-        for obj_id, trk in trackers.items():
-            tx, ty = get_center(*trk['bbox'])
-            if math.hypot(cx - tx, cy - ty) < 50:
-                trackers[obj_id]['bbox'] = det
-                trackers[obj_id]['miss'] = 0
-                updated_ids.append(obj_id)
-                matched = True
-
-                # speed calculation
-                prev_cy = trk['center'][1]
-                delta_pixels = abs(cy - prev_cy)
-                delta_time = time.time() - trk['time']
-                speed_mps = (delta_pixels / PIXELS_PER_METER) / delta_time
-                speed_kmph = speed_mps * 3.6
-                speeds[obj_id] = int(speed_kmph)
-                trackers[obj_id]['center'] = (cx, cy)
-                trackers[obj_id]['time'] = time.time()
-                break
-
-        if not matched:
-            trackers[id_count] = {
-                'bbox': det,
-                'center': (cx, cy),
-                'miss': 0,
-                'time': time.time()
-            }
-            speeds[id_count] = 0
-            updated_ids.append(id_count)
-            id_count += 1
-
-    # update missed trackers
-    for obj_id in list(trackers.keys()):
-        if obj_id not in updated_ids:
-            trackers[obj_id]['miss'] += 1
-            if trackers[obj_id]['miss'] > max_age:
-                del trackers[obj_id]
-                if obj_id in speeds:
-                    del speeds[obj_id]
-
-    # draw count line
-    cv2.line(img, (COUNT_LINE[0], COUNT_LINE[1]), (COUNT_LINE[2], COUNT_LINE[3]), (0, 0, 255), 4)
-
-    # draw trackers
-    for obj_id, trk in trackers.items():
-        x1, y1, x2, y2 = trk['bbox']
-        cx, cy = get_center(x1, y1, x2, y2)
-        speed = speeds.get(obj_id, 0)
-        cvzone.cornerRect(img, (x1, y1, x2 - x1, y2 - y1), colorR=(255, 0, 0))
-        cvzone.putTextRect(img, f'ID {obj_id} | {speed} km/h', (x1, y2 + 20), 1, 1)
-
-        # counting
-        if COUNT_LINE[0] < cx < COUNT_LINE[2] and abs(cy - COUNT_LINE[1]) < 10:
-            if obj_id not in counted_ids:
-                counted_ids.append(obj_id)
-
-    # show count
-    cvzone.putTextRect(img, f'Count: {len(counted_ids)}', (50, 50), scale=2, thickness=2, colorR=(0, 255, 0))
-
-    cv2.imshow("Vehicle Detection", cv2.resize(img, (960, 540)))
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
-
-cap.release()
-cv2.destroyAllWindows()
+Enjoy real-time detection, counting, and speed analysis with a simple Python file and YOLOv8!
